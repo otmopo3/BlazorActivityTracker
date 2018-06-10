@@ -1,0 +1,178 @@
+﻿@page "/activitytracker"
+@using System.Threading;
+@using Blazor.Extensions;
+@using Microsoft.Extensions.Logging;
+
+@inject LocalStorage localStorage;
+@inject ILogger<ActivityTracker> logger;
+
+<h1>Activity Tracker</h1>
+<ul class="list-group">
+    @foreach (var activity in _activities)
+    {
+        <li class="list-group-item d-flex justify-content-between align-items-center" onclick=@(()=>ChangeActivityTimer(activity)) oncontextmenu=@(()=>RemoveActivity(activity))>
+            @activity.Name
+            <span>
+                @activity.TimePeriod.ToString(@"hh\:mm\:ss\:ff")
+            </span>
+        </li>
+    }
+</ul>
+
+<input placeholder="New Activity" bind="@_newActivityName" />
+<button class="btn btn-primary"  onclick="@AddActivity">Add Activity</button>
+<button class="btn btn-primary"  onclick="@ResetAllCounters">Reset All Counters</button>
+
+
+@functions
+{
+    IList<Activity> _activities = new List<Activity>();
+
+    string _newActivityName = "New Activity";
+
+    Timer _timer;
+    TimerState _timerState;
+
+    private const string ActivitiesStorageKey = "activities";
+
+    protected override async Task OnInitAsync()
+    {
+        logger.LogDebug("ActivityTracker init");
+
+        _activities = LoadActivities();
+
+        await Task.Yield();
+    }
+
+    public void ChangeActivityTimer(Activity activity)
+    {
+        _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+
+        _timer?.Dispose();
+
+        _timer = null;
+
+        var curTimerState = _timerState;
+
+        _timerState = null;
+
+        if (curTimerState != null)
+        {
+            curTimerState.IsTimerRunning = false;
+            if (curTimerState.Activity == activity)
+            {
+                logger.LogDebug($"Stpping current activity {activity.Name}");
+                return;
+            }
+        }
+
+        logger.LogDebug($"Starting new activity {activity.Name}");
+
+        _timerState = new TimerState()
+        {
+            IsTimerRunning = true,
+            Activity = activity
+        };
+
+        _timer = new Timer(callback: OnTimerTick, state: _timerState, dueTime: 0, period: 10);
+    }
+
+    public void RemoveActivity(Activity activity)
+    {
+        _activities.Remove(activity);
+
+        SaveActivities();
+    }
+
+    public void AddActivity()
+    {
+        var newActivity = new Activity
+        {
+            Name = _newActivityName
+        };
+
+        _activities.Add(newActivity);
+
+        SaveActivities();
+    }
+
+    public void ResetAllCounters()
+    {
+        foreach (var activity in _activities)
+        {
+            activity.TimePeriod = TimeSpan.Zero;
+        }
+
+        SaveActivities();
+    }
+
+    private void SaveActivities()
+    {
+        localStorage.SetItem<Activity[]>(key: ActivitiesStorageKey, item: _activities.ToArray());
+    }
+
+    private void OnTimerTick(object state)
+    {
+        var timerState = (TimerState)state;
+
+        if (!timerState.IsTimerRunning)
+            return;
+
+        var activity = timerState.Activity;
+
+        DateTime now = DateTime.UtcNow;
+
+        activity.TimePeriod += now - timerState.LastUpdatedTime;
+        this.StateHasChanged();
+        timerState.LastUpdatedTime = now;
+    }
+
+    private List<Activity> LoadActivities()
+    {
+        var activities = new List<Activity>();
+
+        var storedActivities = localStorage.GetItem<Activity[]>(ActivitiesStorageKey);
+
+        if (storedActivities != null)
+        {
+            logger.LogDebug("Loading activities from storage");
+            activities.AddRange(storedActivities);
+        }
+        else
+        {
+            logger.LogDebug("Loading activities from storage");
+
+            var sampleActivities = new Activity[]
+            {
+                    new Activity
+                    {
+                        Name = "Sample Activity 1"
+                    },
+                    new Activity
+                    {
+                        Name = "Sample Activity 2"
+                    }
+            };
+            activities.AddRange(sampleActivities);
+
+        }
+
+        return activities;
+    }
+
+    class TimerState
+    {
+        public bool IsTimerRunning { get; set; }
+
+        public Activity Activity { get; set; }
+
+        public DateTime LastUpdatedTime { get; set; } = DateTime.UtcNow;
+    }
+
+    public class Activity
+    {
+        public string Name { get; set; }
+
+        public TimeSpan TimePeriod { get; set; }
+    }
+}
